@@ -51,12 +51,12 @@ def DarknetResidual(x, filters):
     prev = x
     x = DarknetConv(x, filters // 2, 1)
     x = DarknetConv(x, filters, 3)
-    x = Add()([prev, x])
+    x = Add()([prev, x])  # Residual 残差网络 相加实现
     return x
 
 
 def DarknetBlock(x, filters, blocks):
-    x = DarknetConv(x, filters, 3, strides=2)
+    x = DarknetConv(x, filters, 3, strides=2)  # width/strides
     for _ in range(blocks):
         x = DarknetResidual(x, filters)
     return x
@@ -64,12 +64,12 @@ def DarknetBlock(x, filters, blocks):
 
 def Darknet(name=None):
     x = inputs = Input([None, None, 3])
-    x = DarknetConv(x, 32, 3)
-    x = DarknetBlock(x, 64, 1)
-    x = DarknetBlock(x, 128, 2)  # skip connection
-    x = x_36 = DarknetBlock(x, 256, 8)  # skip connection
-    x = x_61 = DarknetBlock(x, 512, 8)
-    x = DarknetBlock(x, 1024, 4)
+    x = DarknetConv(x, 32, 3)  # 256x256
+    x = DarknetBlock(x, 64, 1)   # 128x128
+    x = DarknetBlock(x, 128, 2)  # skip connection 64x64
+    x = x_36 = DarknetBlock(x, 256, 8)  # skip connection 32x32
+    x = x_61 = DarknetBlock(x, 512, 8)    # 16x16
+    x = DarknetBlock(x, 1024, 4)  # 8x8
     return tf.keras.Model(inputs, (x_36, x_61, x), name=name)
 
 
@@ -93,18 +93,18 @@ def DarknetTiny(name=None):
 
 def YoloConv(filters, name=None):
     def yolo_conv(x_in):
-        if isinstance(x_in, tuple):
-            inputs = Input(x_in[0].shape[1:]), Input(x_in[1].shape[1:])
+        if isinstance(x_in, tuple):  # 判断x_in是不是tuple元组类型 ((x, x_36))
+            inputs = Input(x_in[0].shape[1:]), Input(x_in[1].shape[1:]) # 提取元组中的形状
             x, x_skip = inputs
 
             # concat with skip connection
             x = DarknetConv(x, filters, 1)
-            x = UpSampling2D(2)(x)
+            x = UpSampling2D(2)(x)   # 求了个平均值重新覆盖，尺度不变
             x = Concatenate()([x, x_skip])
-        else:
-            x = inputs = Input(x_in.shape[1:])
+        else:  # x 只有一个x
+            x = inputs = Input(x_in.shape[1:])  # 与x_in的形状一样
 
-        x = DarknetConv(x, filters, 1)
+        x = DarknetConv(x, filters, 1)   # 尺度不变
         x = DarknetConv(x, filters * 2, 3)
         x = DarknetConv(x, filters, 1)
         x = DarknetConv(x, filters * 2, 3)
@@ -197,9 +197,9 @@ def yolo_nms(outputs, anchors, masks, classes):
 
 def YoloV3(size=None, channels=3, anchors=yolo_anchors,
            masks=yolo_anchor_masks, classes=80, training=False):
-    x = inputs = Input([size, size, channels])
+    x = inputs = Input([size, size, channels])  # 416 416 3
 
-    x_36, x_61, x = Darknet(name='yolo_darknet')(x)
+    x_36, x_61, x = Darknet(name='yolo_darknet')(x)   # 8x8
 
     x = YoloConv(512, name='yolo_conv_0')(x)
     output_0 = YoloOutput(512, len(masks[0]), classes, name='yolo_output_0')(x)
