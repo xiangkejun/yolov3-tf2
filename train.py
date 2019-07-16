@@ -54,12 +54,12 @@ def main(_argv):
     if FLAGS.dataset:
         train_dataset = dataset.load_tfrecord_dataset(
             FLAGS.dataset, FLAGS.classes)
-    train_dataset = train_dataset.shuffle(buffer_size=1024)  # TODO: not 1024
-    train_dataset = train_dataset.batch(FLAGS.batch_size)
+    train_dataset = train_dataset.shuffle(buffer_size=1024)  # TODO: not 1024 打乱顺序
+    train_dataset = train_dataset.batch(FLAGS.batch_size)   # 分批处理
     train_dataset = train_dataset.map(lambda x, y: (
-        dataset.transform_images(x, FLAGS.size),
+        dataset.transform_images(x, FLAGS.size),  
         dataset.transform_targets(y, anchors, anchor_masks, 80)))
-    train_dataset = train_dataset.prefetch(
+    train_dataset = train_dataset.prefetch(   # 预加载
         buffer_size=tf.data.experimental.AUTOTUNE)
 
     val_dataset = dataset.load_fake_dataset()
@@ -157,11 +157,11 @@ def main(_argv):
                       run_eagerly=(FLAGS.mode == 'eager_fit'))
 
         callbacks = [
-            ReduceLROnPlateau(verbose=1),
-            EarlyStopping(patience=3, verbose=1),
-            ModelCheckpoint('checkpoints/yolov3_train_{epoch}.tf',
+            ReduceLROnPlateau(verbose=1), # 当指标停止时降低学习率 1：表示更新消息
+            EarlyStopping(patience=3, verbose=1),  # 多久停止训练
+            ModelCheckpoint('checkpoints/yolov3_train_{epoch}.tf',   # 每个周期后保存模型
                             verbose=1, save_weights_only=True),
-            TensorBoard(log_dir='logs')
+            TensorBoard(log_dir='logs')    # 为启动可视化
         ]
 
         history = model.fit(train_dataset,
