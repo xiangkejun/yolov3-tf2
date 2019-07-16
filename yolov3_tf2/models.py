@@ -135,7 +135,7 @@ def YoloOutput(filters, anchors, classes, name=None):
     def yolo_output(x_in):
         x = inputs = Input(x_in.shape[1:])
         x = DarknetConv(x, filters * 2, 3)
-        x = DarknetConv(x, anchors * (classes + 5), 1, batch_norm=False)
+        x = DarknetConv(x, anchors * (classes + 5), 1, batch_norm=False)  # 3*(80+5)
         x = Lambda(lambda x: tf.reshape(x, (-1, tf.shape(x)[1], tf.shape(x)[2],
                                             anchors, classes + 5)))(x)
         return tf.keras.Model(inputs, x, name=name)(x_in)
@@ -144,26 +144,28 @@ def YoloOutput(filters, anchors, classes, name=None):
 
 def yolo_boxes(pred, anchors, classes):
     # pred: (batch_size, grid, grid, anchors, (x, y, w, h, obj, ...classes))
-    grid_size = tf.shape(pred)[1]
+    #(? 13 13 3 5+80)  最小的那一个尺度举例
+    grid_size = tf.shape(pred)[1]  # 中间图像尺度大小 13 
     box_xy, box_wh, objectness, class_probs = tf.split(
-        pred, (2, 2, 1, classes), axis=-1)
+        pred, (2, 2, 1, classes), axis=-1)  # (? 13 13 3,(2,2,1,80)) 前面维度不变
 
     box_xy = tf.sigmoid(box_xy)
     objectness = tf.sigmoid(objectness)
     class_probs = tf.sigmoid(class_probs)
-    pred_box = tf.concat((box_xy, box_wh), axis=-1)  # original xywh for loss
+    pred_box = tf.concat((box_xy, box_wh), axis=-1)  # original xywh for loss (? 13 13 3， 4)
 
     # !!! grid[x][y] == (y, x)
-    grid = tf.meshgrid(tf.range(grid_size), tf.range(grid_size))
-    grid = tf.expand_dims(tf.stack(grid, axis=-1), axis=2)  # [gx, gy, 1, 2]
+    grid = tf.meshgrid(tf.range(grid_size), tf.range(grid_size))  # (13 13)
+    grid = tf.expand_dims(tf.stack(grid, axis=-1), axis=2)  # [gx, gy, 1]  axis 表示插入维度的位置  负数表示从后面向前开始
 
-    box_xy = (box_xy + tf.cast(grid, tf.float32)) / \
+    ## ??????  xx
+    box_xy = (box_xy + tf.cast(grid, tf.float32)) / \ 
         tf.cast(grid_size, tf.float32)
     box_wh = tf.exp(box_wh) * anchors
 
     box_x1y1 = box_xy - box_wh / 2
     box_x2y2 = box_xy + box_wh / 2
-    bbox = tf.concat([box_x1y1, box_x2y2], axis=-1)
+    bbox = tf.concat([box_x1y1, box_x2y2], axis=-1)  # (? 13 13 3， 4)
 
     return bbox, objectness, class_probs, pred_box
 
@@ -173,17 +175,17 @@ def yolo_nms(outputs, anchors, masks, classes):
     b, c, t = [], [], []
 
     for o in outputs:
-        b.append(tf.reshape(o[0], (tf.shape(o[0])[0], -1, tf.shape(o[0])[-1])))
-        c.append(tf.reshape(o[1], (tf.shape(o[1])[0], -1, tf.shape(o[1])[-1])))
-        t.append(tf.reshape(o[2], (tf.shape(o[2])[0], -1, tf.shape(o[2])[-1])))
+        b.append(tf.reshape(o[0], (tf.shape(o[0])[0], -1, tf.shape(o[0])[-1])))  # 跟bbox的shape一样
+        c.append(tf.reshape(o[1], (tf.shape(o[1])[0], -1, tf.shape(o[1])[-1]))) # 和objectness一样
+        t.append(tf.reshape(o[2], (tf.shape(o[2])[0], -1, tf.shape(o[2])[-1]))) # 和class_probs 一样
 
-    bbox = tf.concat(b, axis=1)
-    confidence = tf.concat(c, axis=1)
-    class_probs = tf.concat(t, axis=1)
+    bbox = tf.concat(b, axis=1) # 以 第2维 连接起来
+    confidence = tf.concat(c, axis=1)  # 是否有物体的概率
+    class_probs = tf.concat(t, axis=1) # 是哪种类别物体的概率
 
     scores = confidence * class_probs
     boxes, scores, classes, valid_detections = tf.image.combined_non_max_suppression(
-        boxes=tf.reshape(bbox, (tf.shape(bbox)[0], -1, 1, 4)),
+        boxes=tf.reshape(bbox, (tf.shape(bbox)[0], -1, 1, 4)), # q =1 表示对所有类使用相同框 4 表示box_x1y1 box_x2y2
         scores=tf.reshape(
             scores, (tf.shape(scores)[0], -1, tf.shape(scores)[-1])),
         max_output_size_per_class=100,
@@ -202,13 +204,14 @@ def YoloV3(size=None, channels=3, anchors=yolo_anchors,
     x_36, x_61, x = Darknet(name='yolo_darknet')(x)   # 8x8
 
     x = YoloConv(512, name='yolo_conv_0')(x)
-    output_0 = YoloOutput(512, len(masks[0]), classes, name='yolo_output_0')(x)
-
+    # (图片尺度大小 +3*(80+5) = 255
+    output_0 = YoloOutput(512, len(masks[0]), classes, name='yolo_output_0')(x) #(? 13 13 255)
+   
     x = YoloConv(256, name='yolo_conv_1')((x, x_61))
-    output_1 = YoloOutput(256, len(masks[1]), classes, name='yolo_output_1')(x)
+    output_1 = YoloOutput(256, len(masks[1]), classes, name='yolo_output_1')(x) # (? 26 26 255 )
 
     x = YoloConv(128, name='yolo_conv_2')((x, x_36))
-    output_2 = YoloOutput(128, len(masks[2]), classes, name='yolo_output_2')(x)
+    output_2 = YoloOutput(128, len(masks[2]), classes, name='yolo_output_2')(x) # (? 52 52 255 )
 
     if training:
         return Model(inputs, (output_0, output_1, output_2), name='yolov3')
@@ -254,20 +257,22 @@ def YoloLoss(anchors, classes=80, ignore_thresh=0.5):
     def yolo_loss(y_true, y_pred):
         # 1. transform all pred outputs
         # y_pred: (batch_size, grid, grid, anchors, (x, y, w, h, obj, ...cls))
+        # pred_box:  (batch_size, grid, grid, anchors,4)  xx
         pred_box, pred_obj, pred_class, pred_xywh = yolo_boxes(
             y_pred, anchors, classes)
-        pred_xy = pred_xywh[..., 0:2]
-        pred_wh = pred_xywh[..., 2:4]
+        pred_xy = pred_xywh[..., 0:2] # 0 1
+        pred_wh = pred_xywh[..., 2:4] # 2 3
 
         # 2. transform all true outputs
-        # y_true: (batch_size, grid, grid, anchors, (x1, y1, x2, y2, obj, cls))
+        # y_true: (batch_size, grid, grid, anchors, (x1, y1, x2, y2, obj, cls)) 
+        # y_true: (? 416 416 3 4+1+1) xx
         true_box, true_obj, true_class_idx = tf.split(
-            y_true, (4, 1, 1), axis=-1)
-        true_xy = (true_box[..., 0:2] + true_box[..., 2:4]) / 2
-        true_wh = true_box[..., 2:4] - true_box[..., 0:2]
+            y_true, (4, 1, 1), axis=-1)   # 最后开始划分
+        true_xy = (true_box[..., 0:2] + true_box[..., 2:4]) / 2 # (? 416 416 3 2)
+        true_wh = true_box[..., 2:4] - true_box[..., 0:2]  #(? 416 416 3 2)
 
         # give higher weights to small boxes
-        box_loss_scale = 2 - true_wh[..., 0] * true_wh[..., 1]
+        box_loss_scale = 2 - true_wh[..., 0] * true_wh[..., 1] #  (? 416 416 3) 会少最后那一维
 
         # 3. inverting the pred box equations
         grid_size = tf.shape(y_true)[1]
@@ -275,29 +280,32 @@ def YoloLoss(anchors, classes=80, ignore_thresh=0.5):
         grid = tf.expand_dims(tf.stack(grid, axis=-1), axis=2)
         true_xy = true_xy * tf.cast(grid_size, tf.float32) - \
             tf.cast(grid, tf.float32)
-        true_wh = tf.math.log(true_wh / anchors)
+        true_wh = tf.math.log(true_wh / anchors)  # 取log 没有sqrt开方
         true_wh = tf.where(tf.math.is_inf(true_wh),
                            tf.zeros_like(true_wh), true_wh)
 
         # 4. calculate all masks
-        obj_mask = tf.squeeze(true_obj, -1)
+        # true_obj: (? 416 416 3 1) xx
+        obj_mask = tf.squeeze(true_obj, -1) # 压掉最后一个为1维的维度 (? 416 416 3 ) xx
         # ignore false positive when iou is over threshold
-        true_box_flat = tf.boolean_mask(true_box, tf.cast(obj_mask, tf.bool))
+        # true_box:　(? 416 416 3 ４) 
+        true_box_flat = tf.boolean_mask(true_box, tf.cast(obj_mask, tf.bool)) # 只留下有目标物的box
         best_iou = tf.reduce_max(broadcast_iou(
             pred_box, true_box_flat), axis=-1)
         ignore_mask = tf.cast(best_iou < ignore_thresh, tf.float32)
 
         # 5. calculate all losses
         xy_loss = obj_mask * box_loss_scale * \
-            tf.reduce_sum(tf.square(true_xy - pred_xy), axis=-1)
+            tf.reduce_sum(tf.square(true_xy - pred_xy), axis=-1)  # x^2 y^2 误差计算(? 416 416 3 2)
         wh_loss = obj_mask * box_loss_scale * \
-            tf.reduce_sum(tf.square(true_wh - pred_wh), axis=-1)
-        obj_loss = binary_crossentropy(true_obj, pred_obj)
+            tf.reduce_sum(tf.square(true_wh - pred_wh), axis=-1) #(? 416 416 3 2)
+        obj_loss = binary_crossentropy(true_obj, pred_obj) # 二分类交叉熵方式计算误差
         obj_loss = obj_mask * obj_loss + \
-            (1 - obj_mask) * ignore_mask * obj_loss
+            (1 - obj_mask) * ignore_mask * obj_loss  #(? 416 416 3 )
         # TODO: use binary_crossentropy instead
-        class_loss = obj_mask * sparse_categorical_crossentropy(
-            true_class_idx, pred_class)
+        # true_class_idx： (? 416 416 3 1)
+        class_loss = obj_mask * sparse_categorical_crossentropy( # 两个或更多类别使用的交叉熵损失函数
+            true_class_idx, pred_class) # (? 416 416 3 1)
 
         # 6. sum over (batch, gridx, gridy, anchors) => (batch, 1)
         xy_loss = tf.reduce_sum(xy_loss, axis=(1, 2, 3))
