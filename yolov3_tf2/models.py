@@ -263,11 +263,11 @@ def YoloLoss(anchors, classes=80, ignore_thresh=0.5):
         # y_true: (batch_size, grid, grid, anchors, (x1, y1, x2, y2, obj, cls))
         true_box, true_obj, true_class_idx = tf.split(
             y_true, (4, 1, 1), axis=-1)
-        true_xy = (true_box[..., 0:2] + true_box[..., 2:4]) / 2
-        true_wh = true_box[..., 2:4] - true_box[..., 0:2]
+        true_xy = (true_box[..., 0:2] + true_box[..., 2:4]) / 2  # (x1+x2)/2, (y1+y2)/2
+        true_wh = true_box[..., 2:4] - true_box[..., 0:2]    # (x2-x1),(y2-y1)
 
         # give higher weights to small boxes
-        box_loss_scale = 2 - true_wh[..., 0] * true_wh[..., 1]
+        box_loss_scale = 2 - true_wh[..., 0] * true_wh[..., 1]    # 2-w*h
 
         # 3. inverting the pred box equations
         grid_size = tf.shape(y_true)[1]
@@ -280,12 +280,12 @@ def YoloLoss(anchors, classes=80, ignore_thresh=0.5):
                            tf.zeros_like(true_wh), true_wh)
 
         # 4. calculate all masks
-        obj_mask = tf.squeeze(true_obj, -1)
+        obj_mask = tf.squeeze(true_obj, -1)  # 压掉最后的一维
         # ignore false positive when iou is over threshold
         true_box_flat = tf.boolean_mask(true_box, tf.cast(obj_mask, tf.bool))
         best_iou = tf.reduce_max(broadcast_iou(
             pred_box, true_box_flat), axis=-1)
-        ignore_mask = tf.cast(best_iou < ignore_thresh, tf.float32)
+        ignore_mask = tf.cast(best_iou < ignore_thresh, tf.float32)  # cast 数据类型转换为float32
 
         # 5. calculate all losses
         xy_loss = obj_mask * box_loss_scale * \
@@ -300,7 +300,7 @@ def YoloLoss(anchors, classes=80, ignore_thresh=0.5):
             true_class_idx, pred_class)
 
         # 6. sum over (batch, gridx, gridy, anchors) => (batch, 1)
-        xy_loss = tf.reduce_sum(xy_loss, axis=(1, 2, 3))
+        xy_loss = tf.reduce_sum(xy_loss, axis=(1, 2, 3))  # 按维度求和并降到一维
         wh_loss = tf.reduce_sum(wh_loss, axis=(1, 2, 3))
         obj_loss = tf.reduce_sum(obj_loss, axis=(1, 2, 3))
         class_loss = tf.reduce_sum(class_loss, axis=(1, 2, 3))
